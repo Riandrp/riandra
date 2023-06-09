@@ -1,11 +1,9 @@
 package com.example.inibangkit
 
 import android.annotation.SuppressLint
-import android.content.AsyncQueryHandler
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
@@ -17,21 +15,17 @@ import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
-import android.util.Log
 import android.view.Surface
 import android.view.TextureView
 import android.widget.ImageView
 import androidx.core.content.ContextCompat
 import com.example.inibangkit.ml.BestFloat16
+import com.example.inibangkit.tfmodel.TFModel
 import org.tensorflow.lite.DataType
-import org.tensorflow.lite.Interpreter
-import org.tensorflow.lite.support.common.FileUtil
 import org.tensorflow.lite.support.common.TensorProcessor
-import org.tensorflow.lite.support.common.ops.NormalizeOp
 import org.tensorflow.lite.support.image.ImageProcessor
 import org.tensorflow.lite.support.image.TensorImage
 
-import org.tensorflow.lite.support.image.ops.ResizeOp
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer
 import java.io.FileInputStream
 import java.nio.ByteBuffer
@@ -50,17 +44,19 @@ class MainActivity : AppCompatActivity() {
     lateinit var handler: Handler
     lateinit var cameraManager: CameraManager
     lateinit var textureview: TextureView
+
+    // TensorFlow lite-specific variables
     lateinit var model: BestFloat16
 
     var tensorImage = TensorImage(DataType.FLOAT32)
 //    private lateinit var tfliteModel: Interpreter
-//    private lateinit var probabilityProcessor: TensorProcessor
+    private lateinit var probabilityProcessor: TensorProcessor
 //    private lateinit var outputArray: Array<Array<FloatArray>>
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        model = BestFloat16.newInstance(this)
+        var tfModel = TFModel(this)
 
         setContentView(R.layout.activity_main)
         get_permission()
@@ -87,7 +83,8 @@ class MainActivity : AppCompatActivity() {
                 width: Int,
                 height: Int
             ) {
-                open_camera()
+                open_camera(tfModel)
+
             }
 
             override fun onSurfaceTextureSizeChanged(
@@ -103,27 +100,26 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {
-                bitmap = textureview.bitmap!!
 
-
-                tensorImage.load(bitmap)
-
-// Preprocess the image
-                tensorImage = imageProcessor.process(tensorImage)
-
+//                tensorImage.load()
+//                tensorImage = imageProcessor.process((tensorImage))
+//
 //                probabilityProcessor = TensorProcessor.Builder().add(NormalizeOp(0f, 255f)).build()
-                //val byteBuffer = probabilityProcessor.process(tensorImage.tensorBuffer.floatBuffer)
+//                val byteBuffer = probabilityProcessor.process(tensorImage.tensorBuffer)
+//
+//                output = model.process(tensorImage)
 
-////                val tensorProcessorInput = tensorImage.tensorBuffer
-////                tensorProcessorInput.loadBuffer(tensorImage.buffer)
-////                val byteBuffer = tensorProcessorInput.buffer
+
+//                val tensorProcessorInput = tensorImage.tensorBuffer
+//                tensorProcessorInput.loadBuffer(tensorImage.buffer)
+//                val byteBuffer = tensorProcessorInput.buffer
 //                val tensorProcessorInput = TensorBuffer.createDynamic(DataType.FLOAT32)
 //                tensorProcessorInput.loadBuffer(tensorImage.buffer, tensorImage.tensorBuffer.shape)
 //                val byteBuffer = tensorProcessorInput.buffer
-//
-//                // Run inference
-//                tfliteModel.run(byteBuffer, outputArray)
-//
+
+//                 Run inference
+//                model.run(byteBuffer, outputArray)
+
 //                val detections = getDetectionsFromOutput(outputArray[0])
 
 
@@ -183,7 +179,6 @@ class MainActivity : AppCompatActivity() {
 
         }
         cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
-
     }
     override fun onDestroy() {
         super.onDestroy()
@@ -191,7 +186,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     @SuppressLint("MissingPermission")
-    fun open_camera(){
+    fun open_camera( tfModel: TFModel){
         cameraManager.openCamera(cameraManager.cameraIdList[0], object:CameraDevice.StateCallback(){
             override fun onOpened(p0: CameraDevice) {
                 cameraDevice = p0
@@ -205,10 +200,22 @@ class MainActivity : AppCompatActivity() {
                 cameraDevice.createCaptureSession(listOf(surface), object: CameraCaptureSession.StateCallback(){
                     override fun onConfigured(p0: CameraCaptureSession) {
                         p0.setRepeatingRequest(captureRequest.build(), null, null)
+                        while(true) {
+                            if (!tfModel.isCurrentlyProcessing()) {
+                                var outputs = tfModel.predict(textureview.bitmap!!)
+
+                                // TODO: move this to front
+                                getDetectionsFromOutput(outputs.)
+//                                Log.d("TFModel", "Output: ${outputs.outputAsCategoryList.toString()}")
+
+
+                            }
+                        }
                     }
                     override fun onConfigureFailed(p0: CameraCaptureSession) {
                     }
                 }, handler)
+
             }
 
             override fun onDisconnected(p0: CameraDevice) {
@@ -241,25 +248,25 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-//    data class Detection(
-//        val boundingBox: RectF,
-//        val classIndex: Int,
-//        val score: Float
-//    )
+    data class Detection(
+        val boundingBox: RectF,
+        val classIndex: Int,
+        val score: Float
+    )
 
-//    private fun getDetectionsFromOutput(outputArray: Array<FloatArray>): List<Detection> {
-//        val detections = mutableListOf<Detection>()
-//        for (i in outputArray.indices step 4) {
-//            val boundingBox = RectF(
-//                outputArray[i][0],
-//                outputArray[i][1],
-//                outputArray[i][2],
-//                outputArray[i][3]
-//            )
-//            val classIndex = outputArray[i][4].toInt()
-//            val score = outputArray[i][5]
-//            detections.add(Detection(boundingBox, classIndex, score))
-//        }
-//        return detections
-//    }
+    private fun getDetectionsFromOutput(outputArray: FloatArray): List<Detection> {
+        val detections = mutableListOf<Detection>()
+        for (i in outputArray.indices step 4) {
+            val boundingBox = RectF(
+                outputArray[i][0],
+                outputArray[i][1],
+                outputArray[i][2],
+                outputArray[i][3]
+            )
+            val classIndex = outputArray[i][4].toInt()
+            val score = outputArray[i][5]
+            detections.add(Detection(boundingBox, classIndex, score))
+        }
+        return detections
+    }
 }
